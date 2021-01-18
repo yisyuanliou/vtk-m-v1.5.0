@@ -45,7 +45,7 @@ namespace{
 
 typedef vtkm::Float64 Real;
 const int VARs = 3;
-const int nGauComps = 10;
+const int nGauComps = 4;
 const int SampleBlockSize = 48;
 const int SampleCubeSize = 20;
 const int SampleSphereRadius = 100;
@@ -60,6 +60,7 @@ const vtkm::Float32 fieldMaxValue = 2400;
 vtkm::Float32 delta;
 int currentGMMId = -1;
 int BinsToGMMId[500000] = {};
+int nonZeroBins;
 
 class Sampling : public vtkm::worklet::WorkletMapField
 {
@@ -157,7 +158,7 @@ int Index3DTo1D( int x, int y, int z , int size1, int size2)
 // All samples in trainData have same correspoding GMM ID are used to train single GMM
 // The samples which have same correspoding GMM ID have to be put together in trainData
 // Also, id in gmmIds have to start from 0 and monotonically increase only
-void makeDataset(const int *vdims, vtkm::Float32 *data, char *filepath)
+void makeDataset(const int *vdims, vtkm::Float32 *data, char* filepath)
 {
 	FILE* fp = fopen(filepath, "rb");
 	if (fp == NULL)
@@ -207,16 +208,26 @@ int BinsCntBlocks(vtkm::cont::ArrayHandle<vtkm::Id> bins, vtkm::Id numberOfBins)
 
 void TestAyanGMM()
 {
-	std::string filePrefixPath = "./";
-	vtkm::Id size = vdims[0] * vdims[1] * vdims[2];
+	std::string filePrefixPath = "./data/";
+	int size = vdims[0] * vdims[1] * vdims[2];
 	vtkm::Float32 *gtData = (vtkm::Float32 *)malloc(size * sizeof(vtkm::Float32));
 	//vtkm::Float32 *blkCnts = (vtkm::Float32 *)malloc(size * sizeof(vtkm::Float32));
 	//vtkm::Float32 *blkOrders = (vtkm::Float32 *)malloc(size * sizeof(vtkm::Float32));
 	char pf22file[200] = "pf10.bin";
 
+	// write GMMHistogram data
+	std::cout << "write GMMHistogram data" << std::endl;
+	std::ofstream GMMHistout(filePrefixPath + "GMMHistModel.bin", std::ios::out | std::ios::binary);
+	GMMHistout.write((char*)&vdims[0], 3 * sizeof(int));
+	GMMHistout.write((char*)&SampleCubeSize, sizeof(int));
+	
+
 	makeDataset(vdims, gtData, pf22file);
 	//std::cout << "d" << std::endl;
 	int CubeSize = SampleCubeSize * SampleCubeSize*SampleCubeSize;
+	int nBlocks = size/CubeSize;
+	std::cout<<nBlocks<<std::endl;
+	GMMHistout.write((char*)&nBlocks, sizeof(int));
 	//int BlockSize = SampleBlockSize * SampleBlockSize * SampleBlockSize;
 	//vtkm::Float32 *gtData = (vtkm::Float32 *)malloc(BlockSize * sizeof(vtkm::Float32));
 	std::vector<vtkm::Id> TotalBins;
@@ -248,6 +259,11 @@ void TestAyanGMM()
 	//fout.close();
 	std::cout << "ground truth" << std::endl;
 
+	int blkStIndex[nBlocks];  //not use
+    int blkLens[nBlocks];
+	std::vector<vtkm::Id> binidAry;
+	std::vector<vtkm::Id> freqAry;
+	int nzBinsCnt = 0;
 	int Max = 0, Min = 99999;
 	for (int a = 0; a < vdims[0] / SampleCubeSize; ++a)
 	{
@@ -257,6 +273,9 @@ void TestAyanGMM()
 			{
 				/////create a 16*16 block data
 				//std::cout << "blockdata" << std::endl;
+				blkStIndex[nzBinsCnt] = nzBinsCnt;
+				blkLens[nzBinsCnt] = SampleCubeSize;
+				nzBinsCnt += 1;
 				vtkm::Float32 *blockData = (vtkm::Float32 *)malloc(CubeSize * sizeof(vtkm::Float32));
 				for (int d0 = a * SampleCubeSize; d0 < (a + 1)*SampleCubeSize; d0++) {
 					for (int d1 = b * SampleCubeSize; d1 < (b + 1)* SampleCubeSize; d1++) {
@@ -283,21 +302,27 @@ void TestAyanGMM()
 				// Create the output bin array
 				vtkm::cont::ArrayHandle<vtkm::Id> bins;
 				bins.Allocate(numberOfBins);
-
 				// Get point data
 				vtkm::cont::ArrayHandle<vtkm::Float32> p_data = vtkm::cont::make_ArrayHandle(blockData, CubeSize);
 
 				vtkm::worklet::FieldHistogram histogram;
 				// Run data
+
 				histogram.Run(p_data, numberOfBins, fieldMinValue, fieldMaxValue, delta, bins);
 				//histogram.Run(p_data, numberOfBins, range, delta, bins);
-
 				gmmCnt += BinsCntBlocks(bins, numberOfBins);
-				
 				TotalBins.insert(TotalBins.end(), vtkm::cont::ArrayPortalToIteratorBegin(bins.GetPortalConstControl()),
 					vtkm::cont::ArrayPortalToIteratorEnd(bins.GetPortalConstControl()));
 				//std::cout << "histogram" << std::endl;
-
+				////////////count histogram/////////
+				
+				for(int bin = 0 ; bin < numberOfBins ; ++bin) {
+					if(bins.GetPortalConstControl().Get(bin)!=0) {
+						nonZeroBins += 1;
+						binidAry.push_back(bin);
+						freqAry.push_back(bins.GetPortalConstControl().Get(bin));
+					}
+				}
 				////////////////////// Step 2: data to gmm training format ///////////////////////////////////////
 				///// from blockData to GMM traiing format
 				for (int d0 = a * SampleCubeSize; d0 < (a + 1)*SampleCubeSize; d0++) {
@@ -311,6 +336,7 @@ void TestAyanGMM()
 							int z = d2 - c * SampleCubeSize;
 							int bkIndex = Index3DTo1D(x, y, z, SampleCubeSize, SampleCubeSize);
 							int blkCnt = Index3DTo1D(a, b, c, vdims[0] / SampleCubeSize, vdims[1] / SampleCubeSize);
+							
 							//int gtIndex = Index3DTo1D(d0, d1, d2, vdims[0], vdims[1]);
 							//blkCnts[gtIndex] = blkCnt;
 							int binsId = findGMMId(numberOfBins, fieldMinValue, delta, blockData[bkIndex], blkCnt);
@@ -329,11 +355,20 @@ void TestAyanGMM()
 						}
 					}
 				}
+				free(blockData);
 			}
 		}
 	}
 	std::cout << currentGMMId << " "<<gmmCnt<<" ";
 	std::cout << "Max: " << Max << " Min: " << Min << std::endl;
+
+	GMMHistout.write((char*)&nonZeroBins, sizeof(int));
+	GMMHistout.write((char*)&blkStIndex[0], nBlocks * sizeof(int));
+	GMMHistout.write((char*)&blkLens[0], nBlocks * sizeof(int));
+	GMMHistout.write((char*)&binidAry[0], binidAry.size() * sizeof(int));
+	GMMHistout.write((char*)&freqAry[0], freqAry.size() * sizeof(int));
+
+
 	// Normalize Histogram data
 	vtkm::cont::ArrayHandle<vtkm::Float32> Hbins;
 	Hbins.Allocate(TotalBins.size());
@@ -427,6 +462,36 @@ void TestAyanGMM()
 
 	vtkm::cont::ArrayHandle<vtkm::Id> blkCntIndex = vtkm::cont::make_ArrayHandle(blockCnts);
 	vtkm::cont::ArrayHandle<vtkm::Id> blkOrIndex = vtkm::cont::make_ArrayHandle(blockOrders);
+	/**
+	for (int a = 0; a < vdims[0] / SampleCubeSize; ++a)
+	{
+		for (int b = 0; b < vdims[1] / SampleCubeSize; ++b)
+		{
+			for (int c = 0; c < vdims[2] / SampleCubeSize; ++c)
+			{
+				int blkCnt = Index3DTo1D(a, b, c, vdims[0] / SampleCubeSize, vdims[1] / SampleCubeSize);
+				for(int bin=0;bin<numberOfBins;++bin) {
+					int idx = BinsToGMMId[numberOfBins*blkCnt+bin];
+					vtkm::Float64 *weights = &rsp.gmmsHandle.GetPortalConstControl.Get(idx).weights;
+					vtkm::Float64 *means = &rsp.gmmsHandle.GetPortalConstControl.Get(idx).means;
+					vtkm::Float64 *covMat = &rsp.gmmsHandle.GetPortalConstControl.Get(idx).covMat;
+
+					GMMHistout.write((char*)weights, nGauComps*sizeof(float));
+					GMMHistout.write((char*)means, nGauComps*VARs*sizeof(float));
+					for(int ncomp=0;ncomp<nGauComps;++ncomp) {
+						GMMHistout.write((char*)&covMat[ncomp][0][0], sizeof(float));
+						GMMHistout.write((char*)&covMat[ncomp][0][1], sizeof(float));
+						GMMHistout.write((char*)&covMat[ncomp][0][2], sizeof(float));
+						GMMHistout.write((char*)&covMat[ncomp][1][1], sizeof(float));
+						GMMHistout.write((char*)&covMat[ncomp][1][2], sizeof(float));
+						GMMHistout.write((char*)&covMat[ncomp][2][2], sizeof(float));
+					}
+					
+				}
+			}
+		}
+	}
+	**/
 
 
 	//Convert to PointND
@@ -458,10 +523,12 @@ void TestAyanGMM()
 	std::copy(vtkm::cont::ArrayPortalToIteratorBegin(samples.GetPortalConstControl()),
 		vtkm::cont::ArrayPortalToIteratorEnd(samples.GetPortalConstControl()),
 		reSampleData.begin());
-
+	
+	GMMHistout.close();
 	std::ofstream ofout(filePrefixPath + "reSampleData.bin", std::ios::out | std::ios::binary);
 	ofout.write((char*)&reSampleData[0], reSampleData.size() * sizeof(float));
 	ofout.close();
+	free(gtData);
 
 } // TestMain Function
 }//namespace
