@@ -60,6 +60,56 @@ struct GMM {
             }
         }
     }
+    /*
+    VTKM_EXEC_CONT
+    void setGMM(vtkm::cont::ArrayHandle<vtkm::Float64> &aryData, int &k)
+    {
+        for( int c=0; c<4; c++ ){
+            weights[c] = aryData.GetPortalConstControl().Get(k +14*c);
+            // std::cout<<k +14*c<<" "<<weights[c]<<" ";
+            k++;
+            for( int i=0; i<3; i++ ){
+                means[c][i] = (aryData.GetPortalConstControl().Get(k +14*c));
+                // std::cout<<means[c][i]<<" ";
+                k++;
+            }
+            // std::cout<<"\n";
+            
+            //set covariance matrix, ordered by row major
+            int counter = 0;
+            for( int ro=0; ro<3; ro++ ){
+                for( int co=0; co<3; co++ ){
+                    covMats[c][ro][co] = (aryData.GetPortalConstControl().Get(k +14*c));
+                    // std::cout<<covMats[c][ro][co]<<" ";
+                    k++;
+                    //counter ++;
+                }
+                // std::cout<<"\n";
+            }
+            logPDet[c] = (aryData.GetPortalConstControl().Get(k +14*c));
+            //std::cout<<logPDet[c]<<"\n";
+            k++;
+            for( int ro=0; ro<3; ro++ ){
+                for( int co=0; co<3; co++ ){
+                    precCholMat[c][ro][co] = (aryData.GetPortalConstControl().Get(k +14*c));
+                    // std::cout<<precCholMat[c][ro][co]<<" ";
+                    k++;
+                    //counter ++;
+                }
+                //std::cout<<"\n";
+            }
+            for( int ro=0; ro<3; ro++ ){
+                for( int co=0; co<3; co++ ){
+                    lowerMat[c][ro][co] = (aryData.GetPortalConstControl().Get(k +14*c));
+                    // std::cout<<lowerMat[c][ro][co]<<" ";
+                    k++;
+                    //counter ++;
+                }
+                // std::cout<<"\n";
+            }
+        }
+        // DecomposeCovMatrixToPrecCholMatrix();
+    }*/
 
     VTKM_EXEC_CONT
     vtkm::Vec<DType, VARs> getSample( const vtkm::Vec<DType, VARs>& rP3D, const DType &r ) {
@@ -132,6 +182,7 @@ struct GMM {
         DType prob = 0.0f;
         for( int i=0; i<GMs; i++ ){
             prob += exp ( log(weights[i]) + getLogPdfFromOneComponent(p, i) );
+            // printf("prob %f %f %f %f\n", prob, weights[i], getLogPdfFromOneComponent(p, i), log(weights[i]) + getLogPdfFromOneComponent(p, i));
         }
 
         return prob;

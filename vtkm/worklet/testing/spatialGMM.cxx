@@ -60,7 +60,7 @@ const vtkm::Float32 fieldMaxValue = 2400;
 vtkm::Float32 delta;
 int currentGMMId = -1;
 int BinsToGMMId[500000] = {};
-int nonZeroBins;
+int nonZeroBins=0;
 
 class Sampling : public vtkm::worklet::WorkletMapField
 {
@@ -84,6 +84,8 @@ public:
 				//std::cout << stIdx << " d " << BinsToGMMId[stIdx*numberOfBins + k] << std::endl;
 				vtkm::Float32 f = freqInPortal.Get(OrIdx*numberOfBins + k);
 				//std::cout << OrIdx << " f " << f << std::endl;
+				//if(gmmInPortal.Get(BinsToGMMId[stIdx*numberOfBins + k]).getProbability(xyz)!=0) 
+					//std::cout<<"gmm: "<<gmmInPortal.Get(BinsToGMMId[stIdx*numberOfBins + k]).getProbability(xyz)<<std::endl;
 				vtkm::Float32 Rprob = f * gmmInPortal.Get(BinsToGMMId[stIdx*numberOfBins + k]).getProbability(xyz);
 				//std::cout << "Rp " << Rprob << std::endl;
 				postProb[k] = Rprob;
@@ -213,7 +215,7 @@ void TestAyanGMM()
 	vtkm::Float32 *gtData = (vtkm::Float32 *)malloc(size * sizeof(vtkm::Float32));
 	//vtkm::Float32 *blkCnts = (vtkm::Float32 *)malloc(size * sizeof(vtkm::Float32));
 	//vtkm::Float32 *blkOrders = (vtkm::Float32 *)malloc(size * sizeof(vtkm::Float32));
-	char pf22file[200] = "pf10.bin";
+	char pf22file[200] = "pf16.bin";
 
 	// write GMMHistogram data
 	std::cout << "write GMMHistogram data" << std::endl;
@@ -261,8 +263,8 @@ void TestAyanGMM()
 
 	int blkStIndex[nBlocks];  //not use
     int blkLens[nBlocks];
-	std::vector<vtkm::Id> binidAry;
-	std::vector<vtkm::Id> freqAry;
+	int binidAry[26000];      //not fix
+	int freqAry[26000];       //not fix
 	int nzBinsCnt = 0;
 	int Max = 0, Min = 99999;
 	for (int a = 0; a < vdims[0] / SampleCubeSize; ++a)
@@ -315,14 +317,16 @@ void TestAyanGMM()
 					vtkm::cont::ArrayPortalToIteratorEnd(bins.GetPortalConstControl()));
 				//std::cout << "histogram" << std::endl;
 				////////////count histogram/////////
-				
+				//int tmp=0;
 				for(int bin = 0 ; bin < numberOfBins ; ++bin) {
-					if(bins.GetPortalConstControl().Get(bin)!=0) {
+					if((int)bins.GetPortalConstControl().Get(bin)!=0) {
+						binidAry[nonZeroBins] = bin;
+						freqAry[nonZeroBins] = (int)bins.GetPortalConstControl().Get(bin);
+						//std::cout<<bin<<" ";
+						//tmp += 1;
 						nonZeroBins += 1;
-						binidAry.push_back(bin);
-						freqAry.push_back(bins.GetPortalConstControl().Get(bin));
 					}
-				}
+				}//std::cout<<tmp<<std::endl;
 				////////////////////// Step 2: data to gmm training format ///////////////////////////////////////
 				///// from blockData to GMM traiing format
 				for (int d0 = a * SampleCubeSize; d0 < (a + 1)*SampleCubeSize; d0++) {
@@ -346,6 +350,7 @@ void TestAyanGMM()
 							{
 								currentGMMId += 1;
 								BinsToGMMId[binsId] = currentGMMId;
+								//std::cout<<" "<<currentGMMId<<" ";
 								gmmIds.push_back(currentGMMId);
 							}
 							else
@@ -355,6 +360,7 @@ void TestAyanGMM()
 						}
 					}
 				}
+				//std::cout<<std::endl;
 				free(blockData);
 			}
 		}
@@ -365,10 +371,21 @@ void TestAyanGMM()
 	GMMHistout.write((char*)&nonZeroBins, sizeof(int));
 	GMMHistout.write((char*)&blkStIndex[0], nBlocks * sizeof(int));
 	GMMHistout.write((char*)&blkLens[0], nBlocks * sizeof(int));
-	GMMHistout.write((char*)&binidAry[0], binidAry.size() * sizeof(int));
-	GMMHistout.write((char*)&freqAry[0], freqAry.size() * sizeof(int));
+	GMMHistout.write((char*)&binidAry[0], nonZeroBins * sizeof(int));
+	GMMHistout.write((char*)&freqAry[0], nonZeroBins * sizeof(int));
+	GMMHistout.write((char*)&BinsToGMMId[0], numberOfBins*nBlocks * sizeof(int));
+	GMMHistout.close();
 
+	// for(int i=0;i<10;++i)
+	// {
+	// 	std::cout<<"bin: "<<binidAry[i]<<" "<<freqAry[i]<<std::endl;
+	// }
+	// for(int i=0;i<100;++i)
+	// {
+	// 	std::cout<<"bin2array: "<<BinsToGMMId[i]<<std::endl;
+	// }
 
+	
 	// Normalize Histogram data
 	vtkm::cont::ArrayHandle<vtkm::Float32> Hbins;
 	Hbins.Allocate(TotalBins.size());
@@ -419,12 +436,13 @@ void TestAyanGMM()
 	gmmTimer.Stop();
 
 	std::cout << "GMM Time: " << gmmTimer.GetElapsedTime() << std::endl << std::endl;
+
 	//6th para: 0: random init (clusterLabel useless), 1: use kmean++ init
 	//7th para: screen output: 0: no output, 1:only iteration output, 2: output details
 	//8th para: em stop threshold
 	//9th para: minimal diagnal value in covariance matrix value (em must add this value to diagonal in cov mat)
 
-
+	
 	//////////////////////// Step 4 : write to file //////////////////////////////////
 	char gmmFilePath[1000];
 	strcpy(gmmFilePath, filePrefixPath.c_str());
@@ -462,37 +480,6 @@ void TestAyanGMM()
 
 	vtkm::cont::ArrayHandle<vtkm::Id> blkCntIndex = vtkm::cont::make_ArrayHandle(blockCnts);
 	vtkm::cont::ArrayHandle<vtkm::Id> blkOrIndex = vtkm::cont::make_ArrayHandle(blockOrders);
-	/**
-	for (int a = 0; a < vdims[0] / SampleCubeSize; ++a)
-	{
-		for (int b = 0; b < vdims[1] / SampleCubeSize; ++b)
-		{
-			for (int c = 0; c < vdims[2] / SampleCubeSize; ++c)
-			{
-				int blkCnt = Index3DTo1D(a, b, c, vdims[0] / SampleCubeSize, vdims[1] / SampleCubeSize);
-				for(int bin=0;bin<numberOfBins;++bin) {
-					int idx = BinsToGMMId[numberOfBins*blkCnt+bin];
-					vtkm::Float64 *weights = &rsp.gmmsHandle.GetPortalConstControl.Get(idx).weights;
-					vtkm::Float64 *means = &rsp.gmmsHandle.GetPortalConstControl.Get(idx).means;
-					vtkm::Float64 *covMat = &rsp.gmmsHandle.GetPortalConstControl.Get(idx).covMat;
-
-					GMMHistout.write((char*)weights, nGauComps*sizeof(float));
-					GMMHistout.write((char*)means, nGauComps*VARs*sizeof(float));
-					for(int ncomp=0;ncomp<nGauComps;++ncomp) {
-						GMMHistout.write((char*)&covMat[ncomp][0][0], sizeof(float));
-						GMMHistout.write((char*)&covMat[ncomp][0][1], sizeof(float));
-						GMMHistout.write((char*)&covMat[ncomp][0][2], sizeof(float));
-						GMMHistout.write((char*)&covMat[ncomp][1][1], sizeof(float));
-						GMMHistout.write((char*)&covMat[ncomp][1][2], sizeof(float));
-						GMMHistout.write((char*)&covMat[ncomp][2][2], sizeof(float));
-					}
-					
-				}
-			}
-		}
-	}
-	**/
-
 
 	//Convert to PointND
 	vtkm::cont::ArrayHandle<vtkm::Vec<vtkm::Float32, 3>> xyz;
@@ -536,6 +523,6 @@ void TestAyanGMM()
 int spatialGMM(int argc, char* argv[])
 {
 	vtkm::cont::GetRuntimeDeviceTracker().ForceDevice(vtkm::cont::DeviceAdapterTagTBB{});
-	//vtkm::cont::ScopedRuntimeDeviceTracker(vtkm::cont::DeviceAdapterTagSerial{});
+	// vtkm::cont::ScopedRuntimeDeviceTracker(vtkm::cont::DeviceAdapterTagSerial{});
     return vtkm::cont::testing::Testing::Run(TestAyanGMM, argc, argv);
 }
