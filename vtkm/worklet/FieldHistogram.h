@@ -143,17 +143,16 @@ public:
     const vtkm::Id numberOfValues = fieldArray.GetNumberOfValues();
 
     const FieldType fieldDelta = compute_delta(fieldMinValue, fieldMaxValue, numberOfBins);
-
     // Worklet fills in the bin belonging to each value
     vtkm::cont::ArrayHandle<vtkm::Id> binIndex;
     binIndex.Allocate(numberOfValues);
-
+    
     // Worklet to set the bin number for each data value
     SetHistogramBin<FieldType> binWorklet(numberOfBins, fieldMinValue, fieldDelta);
     vtkm::worklet::DispatcherMapField<SetHistogramBin<FieldType>> setHistogramBinDispatcher(
       binWorklet);
     setHistogramBinDispatcher.Invoke(fieldArray, binIndex);
-
+    
     // Sort the resulting bin array for counting
     vtkm::cont::Algorithm::Sort(binIndex);
 

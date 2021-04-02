@@ -59,6 +59,7 @@ set(unit_tests
   UnitTestWorkletReduceByKey.cxx
   UnitTestVertexClustering.cxx
   UnitTestWaveletCompressor.cxx
+  UnitTestVolumeRendering.cxx
   spatialGMM.cxx
   
   #UnitTestHistModelAndReconstruction.cxx
